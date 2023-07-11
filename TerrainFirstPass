@@ -1,0 +1,390 @@
+Shader "Terrain Shader/TerrainFirstPass"
+{
+
+//--------------------------------------------------------------------------------------------
+    Properties
+    {
+        [HideInInspector] _MainTex ("BaseMap (RGB)", 2D) = "white" {}
+        _Color ("Color", Color) = (1,1,1,1)
+
+        [HDR]
+        _AmbientColor ("Ambient Color", Color) = (0.4,0.4,0.4,1)
+        
+        [HDR]
+        _SpecularColor ("Specular Color", Color) = (0.9,0.9,0.9,1)
+
+        _Glossiness ("Glossiness", Float) = 32
+        
+        [HDR]
+        _RimColor ("Rim Color", Color) = (1,1,1,1)
+        _RimAmount ("Rim Amount", Range (0, 1)) = 0.716
+
+        _RimThreshold ("Rim Threshold", Range(0, 1)) = 0.1  
+        
+             // Splat Map Control Texture
+        [HideInInspector] _Control ("Control (RGBA)", 2D) = "red" {}
+        [HideInInspector] _TerrainHolesTexture ("Holes (RGBA)", 2D) = "red" {}
+ 
+        // Textures
+
+        [HideInInspector] _Splat3 ("Layer 3 (A)", 2D) = "white" {}
+        [HideInInspector] _Splat2 ("Layer 2 (B)", 2D) = "white" {}
+        [HideInInspector] _Splat1 ("Layer 1 (G)", 2D) = "white" {}
+        [HideInInspector] _Splat0 ("Layer 0 (R)", 2D) = "white" {}    
+    }
+    
+    //--------------------------------------------------------------------------------------------
+    
+    SubShader
+    {
+        Pass
+        {
+        
+            //--------------------------------------------------------------------------------------------
+            
+            Tags
+            {
+                "SplatCount" = "4"
+                "Queue" = "Geometry-100"
+                "LightMode"="ForwardBase"
+                "Queue" = "Transparent+1"
+                "RenderType" = "TransparentCutout"
+            }
+            
+            //--------------------------------------------------------------------------------------------
+
+            CGPROGRAM
+            #pragma vertex vert 
+            #pragma fragment frag
+
+            #pragma multi_compile_fwdbase_fullshadows
+			#pragma multi_compile_fog
+            #pragma multi_compile_local __ _ALPHATEST_ON
+            
+            #include "UnityCG.cginc"
+            #include "Lighting.cginc"
+            #include "AutoLight.cginc"
+            
+            //--------------------------------------------------------------------------------------------
+
+            struct appdata
+            {
+                float4 vertex : POSITION;               
+                float4 uv : TEXCOORD0;
+                float4 uv2 : TEXCOORD1;
+                float4 uv3 : TEXCOORD2;
+                float4 uv4 : TEXCOORD3;
+                float4 uv5 : TEXCOORD4;
+                float4 uv6 : TEXCOORD5;
+                float3 normal : NORMAL;
+            };
+            
+            //--------------------------------------------------------------------------------------------
+
+            struct v2f
+            {
+                float4 pos : SV_POSITION;
+                float3 worldNormal : NORMAL;
+                float2 uv : TEXCOORD0;
+                float2 uv2 : TEXCOORD1;
+                float2 uv3 : TEXCOORD2;
+                float2 uv4 : TEXCOORD3;
+                float2 uv5 : TEXCOORD4;
+                float2 uv6 : TEXCOORD5;
+                float3 viewDir : TEXCOORD6;
+
+                SHADOW_COORDS(7)
+            };
+            
+            //--------------------------------------------------------------------------------------------
+
+            sampler2D _Control;
+            float4 _Control_ST;
+
+            sampler2D _TerrainHolesTexture;
+            float4 _TerrainHolesTexture_ST;
+            
+            sampler2D _Splat0;
+            float4 _Splat0_ST;
+
+            sampler2D _Splat1;
+            float4 _Splat1_ST;
+
+            sampler2D _Splat2;
+            float4 _Splat2_ST;
+
+            sampler2D _Splat3;
+            float4 _Splat3_ST;
+
+            //--------------------------------------------------------------------------------------------
+            
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos (v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal (v.normal);     
+                o.viewDir = WorldSpaceViewDir (v.vertex);
+                o.uv = TRANSFORM_TEX (v.uv, _Control);
+                o.uv2 = TRANSFORM_TEX (v.uv2, _Splat0);
+                o.uv3 = TRANSFORM_TEX (v.uv3, _Splat1);
+                o.uv4 = TRANSFORM_TEX (v.uv4, _Splat2);
+                o.uv5 = TRANSFORM_TEX (v.uv5, _Splat3);
+                o.uv6 = TRANSFORM_TEX (v.uv6, _TerrainHolesTexture);
+
+                TRANSFER_SHADOW (o)
+                return o;
+            }
+            
+            //--------------------------------------------------------------------------------------------
+            
+            float4 _Color;
+
+            float4 _AmbientColor;
+
+            float4 _SpecularColor;
+            float _Glossiness;      
+
+            float4 _RimColor;
+            float _RimAmount;
+            float _RimThreshold; 
+            
+            //--------------------------------------------------------------------------------------------   
+
+            float4 frag (v2f i) : SV_Target
+            {
+                float3 normal = normalize (i.worldNormal);
+                float3 viewDir = normalize (i.viewDir);
+                
+                //-------------------------------------------------------------------------------------------- 
+
+                float NdotL = dot (_WorldSpaceLightPos0, normal);
+
+                float shadow = SHADOW_ATTENUATION (i);
+
+                float lightIntensity = smoothstep (0, 0.01, NdotL * shadow); 
+
+                float4 light = lightIntensity * _LightColor0;
+                
+                //-------------------------------------------------------------------------------------------- 
+
+                float3 halfVector = normalize (_WorldSpaceLightPos0 + viewDir);
+                float NdotH = dot (normal, halfVector);
+
+                float specularIntensity = pow (NdotH * lightIntensity, _Glossiness * _Glossiness);
+                float specularIntensitySmooth = smoothstep (0.005, 0.01, specularIntensity);
+                float4 specular = specularIntensitySmooth * _SpecularColor;   
+                
+                //--------------------------------------------------------------------------------------------           
+
+                float rimDot = 1 - dot(viewDir, normal);
+ 
+                float rimIntensity = rimDot * pow(NdotL, _RimThreshold);
+                rimIntensity = smoothstep (_RimAmount - 0.01, _RimAmount + 0.01, rimIntensity);
+                float4 rim = rimIntensity * _RimColor;
+                
+                //-------------------------------------------------------------------------------------------- 
+
+                float4 sample = tex2D (_Control, i.uv);
+                
+                float4 splat0 = tex2D (_Splat0, i.uv2);
+                float4 splat1 = tex2D (_Splat1, i.uv3);
+                float4 splat2 = tex2D (_Splat2, i.uv4);
+                float4 splat3 = tex2D (_Splat3, i.uv5);
+
+                float hole = tex2D (_TerrainHolesTexture, i.uv6);
+                clip (hole == 0.0 ? -1 : 1);
+                
+                float4 splats = splat0 * sample.r + splat1 * sample.g + splat2 * sample.b + splat3 * sample.a;
+                
+                //-------------------------------------------------------------------------------------------- 
+  
+                return (light + _AmbientColor + specular + rim) * _Color * splats;
+                
+                //-------------------------------------------------------------------------------------------- 
+            }
+            
+            ENDCG
+        }
+
+		Pass
+        {
+        
+            //--------------------------------------------------------------------------------------------
+            
+            Tags
+            {
+                "SplatCount" = "4"
+                "Queue" = "Geometry-100"
+                "LightMode"="ForwardAdd"
+                "Queue" = "Transparent+1"
+                "RenderType" = "TransparentCutout"
+            }
+
+			Blend One One
+            
+            //--------------------------------------------------------------------------------------------
+
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #pragma multi_compile_fwdadd_fullshadows
+			#pragma multi_compile_fog
+            #pragma multi_compile_local __ _ALPHATEST_ON
+            
+            #include "UnityCG.cginc"
+            #include "Lighting.cginc"
+            #include "AutoLight.cginc"
+            
+            //--------------------------------------------------------------------------------------------
+
+            struct appdata
+            {
+                float4 vertex : POSITION;               
+                float4 uv : TEXCOORD0;
+                float4 uv2 : TEXCOORD1;
+                float4 uv3 : TEXCOORD2;
+                float4 uv4 : TEXCOORD3;
+                float4 uv5 : TEXCOORD4;
+                float4 uv6 : TEXCOORD5;
+                float3 normal : NORMAL;
+            };
+            
+            //--------------------------------------------------------------------------------------------
+
+            struct v2f
+            {
+                float4 pos : SV_POSITION;
+                float3 worldNormal : NORMAL;
+                float2 uv : TEXCOORD0;
+                float2 uv2 : TEXCOORD1;
+                float2 uv3 : TEXCOORD2;
+                float2 uv4 : TEXCOORD3;
+                float2 uv5 : TEXCOORD4;
+                float2 uv6 : TEXCOORD5;
+                float3 viewDir : TEXCOORD6;
+				float4 posWorld : TEXCOORD7;
+
+                SHADOW_COORDS(8)
+            };
+            
+            //--------------------------------------------------------------------------------------------
+
+            sampler2D _Control;
+            float4 _Control_ST;
+
+            sampler2D _TerrainHolesTexture;
+            float4 _TerrainHolesTexture_ST;
+            
+            sampler2D _Splat0;
+            float4 _Splat0_ST;
+
+            sampler2D _Splat1;
+            float4 _Splat1_ST;
+
+            sampler2D _Splat2;
+            float4 _Splat2_ST;
+
+            sampler2D _Splat3;
+            float4 _Splat3_ST;
+            
+            //--------------------------------------------------------------------------------------------
+            
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos (v.vertex);
+                o.worldNormal = UnityObjectToWorldNormal (v.normal);
+				o.posWorld = mul(unity_ObjectToWorld, v.vertex);
+                o.viewDir = WorldSpaceViewDir (v.vertex);
+                o.uv = TRANSFORM_TEX (v.uv, _Control);
+                o.uv2 = TRANSFORM_TEX (v.uv2, _Splat0);
+                o.uv3 = TRANSFORM_TEX (v.uv3, _Splat1);
+                o.uv4 = TRANSFORM_TEX (v.uv4, _Splat2);
+                o.uv5 = TRANSFORM_TEX (v.uv5, _Splat3);
+                o.uv6 = TRANSFORM_TEX (v.uv6, _TerrainHolesTexture);
+
+                TRANSFER_SHADOW (o)
+                return o;
+            }
+            
+            //--------------------------------------------------------------------------------------------
+            
+            float4 _Color;
+
+            float4 _AmbientColor;
+
+            float4 _SpecularColor;
+            float _Glossiness;      
+
+            float4 _RimColor;
+            float _RimAmount;
+            float _RimThreshold; 
+            
+            //--------------------------------------------------------------------------------------------   
+
+            float4 frag (v2f i) : SV_Target
+            {
+                float3 normal = normalize (i.worldNormal);
+				float3 lightdir = normalize(lerp(_WorldSpaceLightPos0.xyz, _WorldSpaceLightPos0.xyz - i.posWorld.xyz,_WorldSpaceLightPos0.w));
+                float3 viewDir = normalize (i.viewDir);
+                
+                //-------------------------------------------------------------------------------------------- 
+
+                float NdotL = dot ( lightdir , normal);
+
+				UNITY_LIGHT_ATTENUATION(shadows, i, i.posWorld.xyz);
+
+                float lightIntensity = smoothstep (0, 0.01, NdotL * shadows);
+
+                float4 light = lightIntensity * _LightColor0;
+                
+                //-------------------------------------------------------------------------------------------- 
+
+                float3 halfVector = normalize ( lightdir + viewDir);
+                float NdotH = dot (normal, halfVector);
+
+                float specularIntensity = pow (NdotH * lightIntensity, _Glossiness * _Glossiness);
+                float specularIntensitySmooth = smoothstep (0.005, 0.01, specularIntensity);
+                float4 specular = specularIntensitySmooth * _SpecularColor;   
+                
+                //--------------------------------------------------------------------------------------------           
+
+                float rimDot = 1 - dot (viewDir, normal);
+ 
+                float rimIntensity = rimDot * pow(NdotL, _RimThreshold);
+                rimIntensity = smoothstep (_RimAmount - 0.01, _RimAmount + 0.01, rimIntensity);
+                float4 rim = rimIntensity * _RimColor;
+                
+                //-------------------------------------------------------------------------------------------- 
+
+                float4 sample = tex2D (_Control, i.uv);
+                
+                float4 splat0 = tex2D (_Splat0, i.uv2);
+                float4 splat1 = tex2D (_Splat1, i.uv3);
+                float4 splat2 = tex2D (_Splat2, i.uv4);
+                float4 splat3 = tex2D (_Splat3, i.uv5);
+
+                float hole = tex2D (_TerrainHolesTexture, i.uv6);
+                clip (hole == 0.0 ? -1 : 1);
+                
+                float4 splats = splat0 * sample.r + splat1 * sample.g + splat2 * sample.b + splat3 * sample.a;
+                
+                //-------------------------------------------------------------------------------------------- 
+  
+                return (light + specular + rim) * _Color * splats;
+                
+                //-------------------------------------------------------------------------------------------- 
+            }
+            
+            ENDCG
+
+        }
+
+        UsePass "Legacy Shaders/VertexLit/SHADOWCASTER"
+    }
+
+
+    Dependency "AddPassShader" = "Terrain Shader/TerrainAddPassOne"
+
+}
